@@ -12,6 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="EPPlus" Version="7.0.5" />
     <PackageReference Include="Microsoft.ML" Version="3.0.0" />
     <PackageReference Include="Microsoft.ML.Recommender" Version="0.21.0" />
   </ItemGroup>

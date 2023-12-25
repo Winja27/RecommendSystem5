@@ -3,52 +3,53 @@ using System;
 using System.Data;
 using System.IO;
 using Microsoft.ML;
+using Microsoft.ML.Data;
 using Microsoft.ML.Trainers;
+using OfficeOpenXml;
 // </SnippetUsingStatements>
 
 namespace MovieRecommendation
 {
-
     class Program
     {
         static void Main(string[] args)
         {
 
-            // Create MLContext to be shared across the model creation workflow objects
+            // 创建 MLContext 对象，该对象在整个模型创建工作流中共享
             // <SnippetMLContext>
             MLContext mlContext = new MLContext();
             // </SnippetMLContext>
 
-            // Load data
+            // 载入数据
             // <SnippetLoadDataMain>
             (IDataView trainingDataView, IDataView testDataView) = LoadData(mlContext);
             // </SnippetLoadDataMain>
 
-            // Build & train model
+            // 构建并训练模型
             // <SnippetBuildTrainModelMain>
             ITransformer model = BuildAndTrainModel(mlContext, trainingDataView);
             // </SnippetBuildTrainModelMain>
 
-            // Evaluate quality of model
+            // 评估模型质量
             // <SnippetEvaluateModelMain>
-            EvaluateModel(mlContext, testDataView, model);
+            EvaluateModelAndWriteToExcel(mlContext, testDataView, model, "/metrics.xlsx");
             // </SnippetEvaluateModelMain>
 
-            // Use model to try a single prediction (one row of data)
+            // 使用模型进行单个预测（一行数据）
             // <SnippetUseModelMain>
-            UseModelForSinglePrediction(mlContext, model);
+            // UseModelForSinglePrediction(mlContext, model);
             // </SnippetUseModelMain>
 
-            // Save model
+            // 保存模型
             // <SnippetSaveModelMain>
-            SaveModel(mlContext, trainingDataView.Schema, model);
+            // SaveModel(mlContext, trainingDataView.Schema, model);
             // </SnippetSaveModelMain>
         }
 
-        // Load data
+        // 载入数据
         public static (IDataView training, IDataView test) LoadData(MLContext mlContext)
         {
-            // Load training & test datasets using datapaths
+            // 使用数据路径载入训练和测试数据集
             // <SnippetLoadData>
             var trainingDataPath = Path.Combine(Environment.CurrentDirectory, "Data", "recommendation-ratings-train.csv");
             var testDataPath = Path.Combine(Environment.CurrentDirectory, "Data", "recommendation-ratings-test.csv");
@@ -60,16 +61,15 @@ namespace MovieRecommendation
             // </SnippetLoadData>
         }
 
-        // Build and train model
         public static ITransformer BuildAndTrainModel(MLContext mlContext, IDataView trainingDataView)
         {
-            // Add data transformations
+            // 添加数据转换
             // <SnippetDataTransformations>
             IEstimator<ITransformer> estimator = mlContext.Transforms.Conversion.MapValueToKey(outputColumnName: "userIdEncoded", inputColumnName: "userId")
                 .Append(mlContext.Transforms.Conversion.MapValueToKey(outputColumnName: "movieIdEncoded", inputColumnName: "movieId"));
             // </SnippetDataTransformations>
 
-            // Set algorithm options and append algorithm
+            // 设置算法选项并附加算法
             // <SnippetAddAlgorithm>
             var options = new MatrixFactorizationTrainer.Options
             {
@@ -77,7 +77,8 @@ namespace MovieRecommendation
                 MatrixRowIndexColumnName = "movieIdEncoded",
                 LabelColumnName = "Label",
                 NumberOfIterations = 20,
-                ApproximationRank = 100
+                ApproximationRank = 50,
+                // 不指定损失函数，将使用默认的平方损失
             };
 
             var trainerEstimator = estimator.Append(mlContext.Recommendation().Trainers.MatrixFactorization(options));
@@ -91,26 +92,59 @@ namespace MovieRecommendation
             // </SnippetFitModel>
         }
 
-        // Evaluate model
-        public static void EvaluateModel(MLContext mlContext, IDataView testDataView, ITransformer model)
+
+
+
+        public static void EvaluateModelAndWriteToExcel(MLContext mlContext, IDataView testDataView, ITransformer model, string outputPath)
         {
-            // Evaluate model on test data & print evaluation metrics
-            // <SnippetTransform>
+            // 在测试数据上评估模型并打印评估指标
             Console.WriteLine("=============== Evaluating the model ===============");
             var prediction = model.Transform(testDataView);
-            // </SnippetTransform>
 
-            // <SnippetEvaluate>
             var metrics = mlContext.Regression.Evaluate(prediction, labelColumnName: "Label", scoreColumnName: "Score");
-            // </SnippetEvaluate>
 
-            // <SnippetPrintMetrics>
+            Console.WriteLine("Mean Squared Error : " + metrics.MeanSquaredError.ToString());
             Console.WriteLine("Root Mean Squared Error : " + metrics.RootMeanSquaredError.ToString());
+            Console.WriteLine("Mean Absolute Error : " + metrics.MeanAbsoluteError.ToString());
             Console.WriteLine("RSquared: " + metrics.RSquared.ToString());
-            // </SnippetPrintMetrics>
+
+            // 将指标写入到 xlsx 文件
+            WriteMetricsToExcel(outputPath, metrics);
         }
 
-        // Use model for single prediction
+        private static void WriteMetricsToExcel(string outputPath, RegressionMetrics metrics)
+        {
+            using (var package = new ExcelPackage())
+            {
+                var worksheet = package.Workbook.Worksheets.Add("EvaluationMetrics");
+
+                // 写入列名
+                worksheet.Cells[1, 1].Value = "Metric";
+                worksheet.Cells[1, 2].Value = "Value";
+
+                // 写入指标值
+                worksheet.Cells[2, 1].Value = "Mean Squared Error";
+                worksheet.Cells[2, 2].Value = metrics.MeanSquaredError;
+
+                worksheet.Cells[3, 1].Value = "Root Mean Squared Error";
+                worksheet.Cells[3, 2].Value = metrics.RootMeanSquaredError;
+
+                worksheet.Cells[4, 1].Value = "Mean Absolute Error";
+                worksheet.Cells[4, 2].Value = metrics.MeanAbsoluteError;
+
+                worksheet.Cells[5, 1].Value = "RSquared";
+                worksheet.Cells[5, 2].Value = metrics.RSquared;
+
+                // 保存文件
+                package.SaveAs(new FileInfo(outputPath));
+            }
+
+            Console.WriteLine($"Metrics written to {outputPath}");
+        }
+
+
+
+        // 使用模型进行单个预测
         public static void UseModelForSinglePrediction(MLContext mlContext, ITransformer model)
         {
             // <SnippetPredictionEngine>
@@ -118,9 +152,9 @@ namespace MovieRecommendation
             var predictionEngine = mlContext.Model.CreatePredictionEngine<MovieRating, MovieRatingPrediction>(model);
             // </SnippetPredictionEngine>
 
-            // Create test input & make single prediction
+            // 创建测试输入并进行单个预测
             // <SnippetMakeSinglePrediction>
-            var testInput = new MovieRating { userId = 6, movieId = 10 };
+            var testInput = new MovieRating { userId = 9, movieId = 88 };
 
             var movieRatingPrediction = predictionEngine.Predict(testInput);
             // </SnippetMakeSinglePrediction>
@@ -137,10 +171,10 @@ namespace MovieRecommendation
             // </SnippetPrintResults>
         }
 
-        //Save model
+        // 保存模型
         public static void SaveModel(MLContext mlContext, DataViewSchema trainingDataViewSchema, ITransformer model)
         {
-            // Save the trained model to .zip file
+            // 将训练好的模型保存到 .zip 文件
             // <SnippetSaveModel>
             var modelPath = Path.Combine(Environment.CurrentDirectory, "Data", "MovieRecommenderModel.zip");
 
